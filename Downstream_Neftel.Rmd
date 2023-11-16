@@ -1,0 +1,457 @@
+
+```{r}
+library(Seurat)
+library(ggplot2)
+library(Rtsne)
+library(rgl)
+library(dplyr)
+library(reshape)
+library(RColorBrewer)
+library(kohonen)
+library(ComplexHeatmap)
+library(circlize)
+library(GetoptLong)
+library(aod)
+library(tidyverse) 
+```
+
+Completed table
+```{r}
+# load("Neftel 500 6000.RData")
+# #Reading output from Differential Expression
+# neftel.markers <-  readRDS("NeftelDElist.RDS")
+# #Reading the outputfrom seurat cell cycle phase assignment
+# neftel.cellcycle <- readRDS("NeftelCellScoringUPDATED.RDS")
+exp.matFINAL <- read.table(file = "neftelmatrix5006000(scaled).txt", header = TRUE, as.is = TRUE, row.names = 1)
+#View(neftel.markers)
+
+
+# # Cut down expression table to just DE genes
+# exp.matDE <- exp.matFINAL[rownames(exp.matFINAL) %in% neftel.markers$gene,]
+# #Obtain filtered cells and phases
+# cellcycle.assignment<-data.frame(sort(neftel.cellcycle$Phase))
+# #Cut down expression table by relevant cells only 
+# exp.matDEfinal <- exp.matDE[colnames(exp.matDE) %in% rownames(cellcycle.assignment)]
+# #Order cells by phase
+# colnames(exp.matDEfinal) <- intersect(rownames(cellcycle.assignment),colnames(exp.matDEfinal))
+
+```
+
+
+```{r}
+###############################################
+#Average expression table and relevant plots
+
+###############################################
+set.seed(2023)
+load("Neftel 500 6000.RData")
+
+# Find the average expression of the genes in each phase
+neftelavg <- AverageExpression(neftel,slot = "scale.data") 
+
+# Filter the average expression table down to just the DE genes
+neftelavg <- as.data.frame(neftelavg)
+length(intersect(rownames(neftelavg),neftel.markers$gene)) #279
+neftelavg <- neftelavg[rownames(neftelavg) %in% neftel.markers$gene,]
+
+
+
+###PCA CLUSTERING
+
+neftelpca <- prcomp(neftelavg)
+
+pca.scores <- data.frame(neftelpca$x)
+
+neftel.val <- cbind(neftelavg,pca.scores)
+
+head(neftel.val)
+
+ 
+### SOM CLUSTERING
+
+neftel.val$gene <- rownames(neftel.val)
+
+neftel.val <- neftel.val %>% select(gene, everything())
+
+som.data <- as.matrix(neftel.val[,c(2:4)])
+
+
+
+som.data <- som(som.data, grid = somgrid(6, 6, "hexagonal"))
+summary(som.data)
+
+plot(som.data, main = "Neftel data",shape="straight")
+
+# TACC3 cluster list
+somclusterlist <- data.frame(rownames(neftel.val),som.data$unit.classif)
+grep("^12$",somclusterlist$som.data.unit.classif,value =T) # 4 
+TACC3listneftel <- somclusterlist[grep("^12$",somclusterlist$som.data.unit.classif),] #4
+
+
+## use hierarchical clustering to cluster 
+som.data$codes <- as.data.frame(som.data$codes)
+som_cluster <- cutree(hclust(dist(som.data$codes)),k = 5)
+# plot these results:
+plot(som.data, type="mapping", bgcol = som_cluster, main = "Clusters")
+
+add.cluster.boundaries(som.data, som_cluster) 
+
+
+### 3D scatter plot
+#plot3d(neftelavg)
+#rglwidget()
+
+```
+
+```{r}
+#Dotplot of TACC3 cluster
+DotPlot(neftel, features = TACC3listneftel$rownames.neftel.val. ,dot.scale = 8) + RotatedAxis()
+
+```
+
+
+SOM clustering on all genes
+```{r}
+neftelavgall <- AverageExpression(neftel,slot = "scale.data") 
+neftelavgall <- as.data.frame(neftelavgall)
+
+#PCA CLUSTERING
+
+neftelallpca <- prcomp(neftelavgall)
+
+allpca.scores <- data.frame(neftelallpca$x)
+
+neftel.valall <- cbind(neftelavgall,allpca.scores)
+head(neftel.valall)
+
+# SOM CLUSTERING
+
+neftel.valall$gene <- rownames(neftel.valall)
+neftel.valall <- neftel.valall %>% select(gene, everything())
+
+som.dataall <- as.matrix(neftel.valall[,c(2:4)])
+set.seed(2023)
+som.dataall <- som(som.dataall, grid = somgrid(6, 6, "hexagonal"))
+summary(som.dataall)
+
+plot(som.dataall, main = "Neftel data", shape="straight")
+
+somclusterlistall <- data.frame(rownames(neftel.valall),som.dataall$unit.classif)
+grep("^6$",somclusterlistall$som.dataall.unit.classif,value =T) #1
+TACC3listallneftel <- somclusterlistall[grep("^6$",somclusterlistall$som.dataall.unit.classif),] #1
+
+## use hierarchical clustering to cluster the codebook vectors
+som.dataall$codes <- as.data.frame(som.dataall$codes)
+som_clusterall <- cutree(hclust(dist(som.dataall$codes)),k = 5)
+# plot these results:
+plot(som.dataall, type="mapping", bgcol = som_clusterall, main = "Clusters")
+add.cluster.boundaries(som.dataall, som_clusterall) 
+
+length(intersect(TACC3listneftel$rownames.neftel.val.,TACC3listallneftel$rownames.neftel.valall.)) # 12 (all DE genes)
+
+```
+
+Complex Heatmap - SOM derived TACC3 list for average expression (Neftel) 
+```{r}
+
+#Loading the final expression matrix for scaled neftel data
+#exp.matFINAL <- read.table(file = "neftelmatrix5006000(scaled).txt", header = TRUE, as.is = TRUE, row.names = 1)
+
+# Cut down expression table to just TACC3 related genes from SOM Clustering
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% TACC3listneftel$rownames.neftel.val.,]
+#all genes version
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% TACC3listallneftel$rownames.neftel.valall.,]
+
+
+#Annotating columns with Cell Cycle Phase
+ha=HeatmapAnnotation(Phase=neftel$Phase, col=list(Phase=c("S"="lightgreen","G2M"="lightblue","G1"="orange")))
+
+#Constructing a ComplexHetamp
+ht_list = Heatmap(data.matrix(Tacc3.mtx), col = colorRamp2(c(-1.5, 0, 1.5), c("blue", "white", "red")),border = "white" ,name = "scaled_expr",row_title = "Clustering of TACC3 related genes from SOM",show_column_names = FALSE,show_row_names = TRUE ,top_annotation = ha,row_names_max_width = unit(3, "cm"),width = unit(10, "cm"),na_col = "black",column_km =3,gap=unit(10,"mm"),row_names_gp = gpar(fontsize = 10),heatmap_legend_param = list(title = "Scaled expression",use_raster = TRUE))
+#save.image("/rds/projects/g/gendood-preclinomics/Bioinfo_Module_6_Group_Project/som_ht_neftel.RData")
+
+#View the heatmap
+ht_list
+
+```
+
+
+Subtype Heatmap
+```{r}
+exp.matFINAL <- read.table(file = "neftelmatrix5006000(scaled).txt", header = TRUE, as.is = TRUE, row.names = 1)
+
+#Load in subtype annotation
+Subtype <- readRDS("NeftelCellSubtypes.RDS")
+Subtype$subtype[grepl("^MESlike", Subtype$subtype)] <- "Mesenchymal"
+Subtype$subtype[grepl("^AClike", Subtype$subtype)] <- "Classical"
+Subtype$subtype[grepl("^OPClike", Subtype$subtype)] <- "Proneural"
+Subtype$subtype[grepl("^NPClike", Subtype$subtype)] <- "Proneural"
+
+# Cut down expression table to just TACC3 related genes from SOM Clustering
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% TACC3listneftel$rownames.neftel.val.,] #DE
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% TACC3listallneftel$rownames.neftel.valall.,] #SOM
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% overlapDE,] #118 genes boxplots 
+Tacc3.mtx <- exp.matFINAL[rownames(exp.matFINAL) %in% unique(neftel.markers$gene),] #neftel de genes
+
+Tacc3.mtx <- Tacc3.mtx[,intersect(colnames(Tacc3.mtx),rownames(Subtype))]
+
+
+neftelphase <- as.data.frame(neftel$Phase)
+
+neftelphase <- neftelphase[intersect(rownames(neftelphase),rownames(Subtype)),, drop = F]
+
+
+#Annotating columns with Cell Cycle Phase
+ha=HeatmapAnnotation(Subtype=Subtype$subtype, col=list(Subtype=c("Classical"="#d8b365","Proneural"="#af8dc3","Mesenchymal" = "#5ab4ac")))
+ha2=HeatmapAnnotation(Phase=neftelphase$`neftel$Phase`, col=list(Phase=c("S"="#e41a1c","G2M"="#377eb8","G1"="#4daf4a")))
+
+
+#Constructing a ComplexHetamp
+ht_list = Heatmap(data.matrix(Tacc3.mtx), col = colorRamp2(c(-1.5, 0, 1.5), c("blue", "white", "red")),border = "white" ,name = "scaled_expr",row_title = "Clustering of TACC3 related genes from SOM",show_column_names = FALSE,show_row_names = TRUE ,top_annotation = c(ha,ha2),row_names_max_width = unit(3, "cm"),width = unit(10, "cm"),na_col = "black",column_km =3,gap=unit(10,"mm"),row_names_gp = gpar(fontsize = 10),heatmap_legend_param = list(title = "Expression",use_raster = TRUE, height = unit(30, "cm"),row_names_gp = gpar(fontsize = 2)))
+#save.image("/rds/projects/g/gendood-preclinomics/Bioinfo_Module_6_Group_Project/som_ht_neftel.RData")
+
+#View the heatmap
+ht_list
+
+```
+
+#boxplots
+```{r}
+colnames(Tacc3.mtx) <- Subtype$subtype
+
+# Calculate the row-wise average for each subtype
+Tacc3.mtx$Classical.average <- rowMeans(Tacc3.mtx[, grepl("Classical", colnames(Tacc3.mtx))])
+Tacc3.mtx$Mesenchymal.average <- rowMeans(Tacc3.mtx[, grepl("Mesenchymal", colnames(Tacc3.mtx))])
+Tacc3.mtx$Proneural.average <- rowMeans(Tacc3.mtx[, grepl("Proneural", colnames(Tacc3.mtx))])
+
+Tacc3.mtx.subset <- Tacc3.mtx[, c("Classical.average", "Mesenchymal.average", "Proneural.average")]
+
+
+# Create a boxplot of the expression values for each subtype
+boxplot(Tacc3.mtx.subset, main="Gene Expression by Subtype", names=c("Classical", "Mesenchymal", "Proneural"), ylab="Expression Value")
+
+
+# boxplot with jitter
+expression_data_long <- Tacc3.mtx.subset %>%
+  rownames_to_column("Gene") %>%
+  gather(Class, Expression, -Gene)
+
+ggplot(expression_data_long, aes(x = Class, y = Expression)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(x = "Class", y = "Expression") +
+  ggtitle("Gene Expression by Subtype") +
+  geom_jitter()
+  
+
+
+### all DE genes ###
+
+length(intersect(rownames(exp.matFINAL),neftel.markers$gene)) #279
+exp.matFINAL2 <- exp.matFINAL[rownames(exp.matFINAL) %in% neftel.markers$gene,]
+exp.matFINAL2 <- exp.matFINAL2[,intersect(colnames(exp.matFINAL2),rownames(Subtype))]
+colnames(exp.matFINAL2) <- Subtype$subtype
+
+
+#colnames(exp.matFINAL) <- Subtype$subtype
+
+# Calculate the row-wise average for each subtype
+exp.matFINAL2$Classical.average <- rowMeans(exp.matFINAL2[, grepl("Classical", colnames(exp.matFINAL2))])
+exp.matFINAL2$Mesenchymal.average <- rowMeans(exp.matFINAL2[, grepl("Mesenchymal", colnames(exp.matFINAL2))])
+exp.matFINAL2$Proneural.average <- rowMeans(exp.matFINAL2[, grepl("Proneural", colnames(exp.matFINAL2))])
+
+exp.matFINAL.subset <- exp.matFINAL2[, c("Classical.average", "Mesenchymal.average", "Proneural.average")]
+
+
+# Create a boxplot of the expression values for each subtype
+boxplot(exp.matFINAL.subset, main="Gene Expression by Subtype", names=c("Classical", "Mesenchymal", "Proneural"), ylab="Expression Value")
+
+# boxplot with jitter
+expression_data_long <- exp.matFINAL.subset %>%
+  rownames_to_column("Gene") %>%
+  gather(Class, Expression, -Gene)
+
+ggplot(expression_data_long, aes(x = Class, y = Expression)) +
+  geom_boxplot(outlier.shape = NA) +
+  labs(x = "Class", y = "Expression") +
+  ggtitle("Gene Expression by Subtype") +
+  geom_jitter()
+  
+
+### Phases boxplot ###
+
+colnames(Tacc3.mtx) <- neftel$Phase
+
+# Calculate the row-wise average for each subtype
+Tacc3.mtx$G2M.average <- rowMeans(Tacc3.mtx[, grepl("G2M", colnames(Tacc3.mtx))])
+Tacc3.mtx$S.average <- rowMeans(Tacc3.mtx[, grepl("S", colnames(Tacc3.mtx))])
+Tacc3.mtx$G1.average <- rowMeans(Tacc3.mtx[, grepl("G1", colnames(Tacc3.mtx))])
+
+
+Tacc3.mtx.subset <- Tacc3.mtx[, c("G2M.average", "S.average","G1.average")]
+
+
+# Create a boxplot of the expression values for each phase
+boxplot(Tacc3.mtx.subset, main="Gene Expression by Subtype", names=c("G2M", "S", "G1"), ylab="Expression Value")
+
+#DE genes
+length(intersect(rownames(exp.matFINAL),neftel.markers$gene)) #279
+exp.matFINAL2 <- exp.matFINAL[rownames(exp.matFINAL) %in% neftel.markers$gene,]
+
+colnames(exp.matFINAL2) <- neftel$Phase
+
+
+# Calculate the row-wise average for each subtype
+exp.matFINAL2$G2M.average <- rowMeans(exp.matFINAL2[, grepl("G2M", colnames(exp.matFINAL2))])
+exp.matFINAL2$S.average <- rowMeans(exp.matFINAL2[, grepl("S", colnames(exp.matFINAL2))])
+exp.matFINAL2$G1.average <- rowMeans(exp.matFINAL2[, grepl("G1", colnames(exp.matFINAL2))])
+
+exp.matFINAL.subset <- exp.matFINAL2[, c("G2M.average", "S.average","G1.average")]
+
+# Create a boxplot of the expression values for each phase
+boxplot(exp.matFINAL.subset, main="Gene Expression by Subtype", names=c("G2M", "S", "G1"), ylab="Expression Value")
+
+
+```
+
+## fishers exact test
+```{r}
+# Create binary variables indicating high expression for each subtype based on the highest numerical value per row
+Tacc3.mtx.subset_binary <- Tacc3.mtx.subset %>%
+  mutate(Classical.binary = ifelse(Classical.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0),
+         Mesenchymal.binary = ifelse(Mesenchymal.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0),
+         Proneural.binary = ifelse(Proneural.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0))
+
+
+# Create a 3x2 contingency table
+#FIX THIS SOMETHING IS WRONG DOESNT ADD PROPERLY
+
+contingency_table <- matrix(c(sum(Tacc3.mtx.subset_binary$Classical.binary),
+                              sum(Tacc3.mtx.subset_binary$Mesenchymal.binary),
+                              sum(Tacc3.mtx.subset_binary$Proneural.binary),
+                              sum(!Tacc3.mtx.subset_binary$Classical.binary),
+                              sum(!Tacc3.mtx.subset_binary$Mesenchymal.binary),
+                              sum(!Tacc3.mtx.subset_binary$Proneural.binary)), nrow = 3, ncol = 2, byrow = F)
+
+# Add row and column names to the contingency table
+rownames(contingency_table) <- c("Classical", "Mesenchymal", "Proneural")
+colnames(contingency_table) <- c("High", "Low")
+
+
+
+# Perform Fisher's exact test
+fisher_test <- fisher.test(contingency_table, hybrid = T)
+fisher_test
+
+# Perform Fisher's exact test
+chisq_test <- chisq.test(contingency_table)
+chisq_test
+
+####################################################################################
+
+# Create binary variables indicating high expression for each subtype based on the highest numerical value per row
+Tacc3.mtx.subset_binary <- exp.matFINAL.subset %>%
+  mutate(Classical.binary = ifelse(Classical.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0),
+         Mesenchymal.binary = ifelse(Mesenchymal.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0),
+         Proneural.binary = ifelse(Proneural.average == pmax(Classical.average, Mesenchymal.average, Proneural.average), 1, 0))
+
+
+# Create a 3x2 contingency table
+
+contingency_table <- matrix(c(sum(Tacc3.mtx.subset_binary$Classical.binary),
+                              sum(Tacc3.mtx.subset_binary$Mesenchymal.binary),
+                              sum(Tacc3.mtx.subset_binary$Proneural.binary),
+                              sum(!Tacc3.mtx.subset_binary$Classical.binary),
+                              sum(!Tacc3.mtx.subset_binary$Mesenchymal.binary),
+                              sum(!Tacc3.mtx.subset_binary$Proneural.binary)), nrow = 3, ncol = 2, byrow = F)
+
+# Add row and column names to the contingency table
+rownames(contingency_table) <- c("Classical", "Mesenchymal", "Proneural")
+colnames(contingency_table) <- c("High", "Low")
+
+
+
+# Perform Fisher's exact test
+fisher_test <- fisher.test(contingency_table, hybrid = T)
+fisher_test
+
+# Perform Fisher's exact test
+chisq_test <- chisq.test(contingency_table)
+chisq_test
+
+
+```
+
+
+Correlation matrix
+```{r}
+
+## T TEST
+
+# Perform a t-test comparing Proneural with Classical group
+ttest_classical_proneural <- t.test(Tacc3.mtx.subset$Proneural.average, Tacc3.mtx.subset$Classical.average)
+
+# Perform a t-test comparing Proneural with Mesenchymal group
+ttest_mesenchymal_proneural <- t.test(Tacc3.mtx.subset$Proneural.average, Tacc3.mtx.subset$Mesenchymal.average)
+
+# Perform a t-test comparing Classical with Mesenchymal group
+ttest_classical_mesenchymal <- t.test(Tacc3.mtx.subset$Classical.average, Tacc3.mtx.subset$Mesenchymal.average)
+
+# Check the p-values of the t-tests
+ttest_classical_proneural$p.value
+ttest_mesenchymal_proneural$p.value
+ttest_classical_mesenchymal$p.value
+
+# Perform a t-test comparing Proneural with Classical group
+ttest_classical_proneural <- t.test(exp.matFINAL.subset$Proneural.average, exp.matFINAL.subset$Classical.average)
+
+# Perform a t-test comparing Proneural with Mesenchymal group
+ttest_mesenchymal_proneural <- t.test(exp.matFINAL.subset$Proneural.average, exp.matFINAL.subset$Mesenchymal.average)
+
+# Check the p-values of the t-tests
+ttest_classical_proneural$p.value
+ttest_mesenchymal_proneural$p.value
+
+############# phases t test ############
+
+# Perform a t-test comparing G2M with S group
+ttest_G2M_S <- t.test(Tacc3.mtx.subset$G2M.average, Tacc3.mtx.subset$S.average)
+
+# Perform a t-test comparing G2M with G1 group
+ttest_G2M_G1 <- t.test(Tacc3.mtx.subset$G2M.average, Tacc3.mtx.subset$G1.average)
+
+# Perform a t-test comparing S with G1 group
+ttest_G1_S <- t.test(Tacc3.mtx.subset$G1.average, Tacc3.mtx.subset$S.average)
+
+# Check the p-values of the t-tests
+ttest_G2M_S$p.value
+ttest_G2M_G1$p.value
+ttest_G1_S$p.value
+
+
+```
+
+
+
+```{r}
+neftelavg$G1_S_diff <- abs(neftelavg$RNA.G1 - neftelavg$RNA.S)
+neftelavg$S_G2M_diff <- abs(neftelavg$RNA.S - neftelavg$RNA.G2M)
+neftelavg$G1_G2M_diff <- abs(neftelavg$RNA.G1 - neftelavg$RNA.G2M)
+neftelavg$mag_dif <- neftelavg$G1_S_diff + neftelavg$S_G2M_diff + neftelavg$G1_G2M_diff
+
+
+hist(neftelavg$mag_dif)
+
+summary(neftelavg$mag_dif)
+
+#geneindex <- rownames(neftelavg)[neftelavg$mag_dif > 3.154]
+
+geneindexneftel <- rownames(neftelavg)[neftelavg$mag_dif > quantile(neftelavg$mag_dif,0.7)]
+
+#View(as.data.frame(geneindexneftel))
+
+
+length(intersect(geneindexneftel,TACC3listallneftel$rownames.neftel.valall.)) #56/56 SOM Genes, 
+length(intersect(geneindexneftel,TACC3listneftel$rownames.neftel.val.)) #12/12 SOM genes
+
+```
+

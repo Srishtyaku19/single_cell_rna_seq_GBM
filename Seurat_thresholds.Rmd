@@ -1,0 +1,111 @@
+---
+title: "Seurat_thresholds"
+date: "2023-01-19"
+output: html_document
+---
+
+```{r}
+#rm(list=ls())
+load("Neftel 500 6000.RData")
+```
+
+
+```{r}
+library(Seurat)
+library(VennDiagram)
+library(fgsea)
+library(data.table)
+library(tidyverse)
+```
+
+
+```{r}
+
+# Read in the expression matrix The first row is a header row, the first column is rownames
+exp.mat <- read.table(file = "IDHwtGBM.processed.SS2.logTPM.txt", header = TRUE, 
+    as.is = TRUE, row.names = 1)
+
+# A list of cell cycle markers, from Tirosh et al, 2015, is loaded with Seurat.  We can
+# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+
+
+```
+
+
+```{r}
+#loop over cells and features and make seurat objects then loop over the objects.
+
+cells <- c(500,600,700)
+features <- c(3000,5000,7000)
+
+
+for(c in cells){
+  for(f in features){
+    neftel <- CreateSeuratObject(counts=exp.mat, min.cells=c, min.features=f)
+    neftel <- NormalizeData(neftel)
+    neftel <- FindVariableFeatures(neftel, selection.method = "vst")
+    print(dim(neftel))
+    neftel <- ScaleData(neftel, features = rownames(neftel))
+    neftel <- RunPCA(neftel, features = VariableFeatures(neftel))
+    neftel <- CellCycleScoring(neftel, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+    neftel <- RunPCA(neftel, features = c(s.genes, g2m.genes))
+    dimUsed <- 20
+    neftel <- RunUMAP(neftel, dims=1:dimUsed, seed.use=2021)
+    print(DimPlot(neftel,reduction = "umap", label = TRUE))
+  }
+  
+}
+
+# 500 5000, 500 6000, 700 5000, 700 6000
+
+```
+
+
+
+## Darmanis Loop
+```{r}
+# Read in the expression matrix The first row is a header row, the first column is rownames
+darmanis.expmat <- read.csv("GBM_normalized_gene_counts.csv", sep = "" )
+darmanis_metadata <- read.csv("GBM_data_and_metadata/GBM_metadata.csv", sep = "" )
+
+darmanis_metadata <- darmanis_metadata[grep("Tumor",darmanis_metadata$Location),]
+
+colnames(darmanis.expmat) <- substr(colnames(darmanis.expmat),2,nchar(colnames(darmanis.expmat)))
+
+darmanis.expmat <- darmanis.expmat[,colnames(darmanis.expmat) %in% rownames(darmanis_metadata)]
+
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+g2m.genes <- g2m.genes[!grepl("TACC3",g2m.genes)]
+```
+
+
+```{r}
+#loop over cells and features and make seurat objects then loop over the objects.
+
+cells <- c(50,100,200)
+features <- c(1000,2000,3000)
+
+
+for(c in cells){
+  for(f in features){
+    darmanis <- CreateSeuratObject(counts = darmanis.expmat, min.cells =c, min.features = f)
+    darmanis <- FindVariableFeatures(darmanis, selection.method = "vst")
+    print(dim(darmanis))
+    darmanis <- ScaleData(darmanis, features = rownames(darmanis))
+    darmanis <- RunPCA(darmanis, features = VariableFeatures(darmanis))
+    darmanis <- CellCycleScoring(darmanis, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+    darmanis <- RunPCA(darmanis, features = c(s.genes, g2m.genes))
+    dimUsed <- 20
+    darmanis <- RunUMAP(darmanis, dims=1:dimUsed, seed.use=2021)
+    print(DimPlot(darmanis,reduction = "umap", label = TRUE))
+  }
+  
+}
+
+# 50 1000, 50 2000, 50 3000, 100 1000...
+
+```
+

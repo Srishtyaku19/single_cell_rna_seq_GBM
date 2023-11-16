@@ -1,0 +1,548 @@
+---
+title: "Seurat Analysis"
+output:
+  pdf_document: default
+  html_document: default
+date: "2022-11-24"
+---
+
+```{r}
+#rm(list=ls())
+load("Neftel 500 6000.RData")
+
+meta <- read.table("IDHwt.GBM.Metadata.SS2.txt")
+metamod <- read.table("IDHwt.GBM.MetaModules.tsv")
+```
+
+
+```{r}
+library(Seurat)
+library(VennDiagram)
+library(fgsea)
+library(data.table)
+library(tidyverse)
+library(BiocParallel)
+library(dplyr)
+library(DescTools)
+#library(writexl)
+
+```
+
+```{r}
+# Read in the expression matrix The first row is a header row, the first column is rownames
+exp.mat <- read.table(file = "IDHwtGBM.processed.SS2.logTPM.txt", header = TRUE, 
+    as.is = TRUE, row.names = 1)
+
+# A list of cell cycle markers, from Tirosh et al, 2015, is loaded with Seurat.  We can
+# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes
+#View(s.genes)
+g2m.genes <- cc.genes$g2m.genes
+#g2m.genes <- g2m.genes[!grepl("TACC3",g2m.genes)]
+
+
+```
+
+
+```{r}
+# Create our Seurat object and complete the initalization steps
+
+#Genes expressed in less than 500 cells are removed. Cells with at least 6000 detected genes are kept.
+neftel <- CreateSeuratObject(counts = exp.mat, min.cells = 500  , min.features = 6000)
+                                              
+
+#PercentageFeatureSet(neftel,pattern="^MT-") -> neftel$percent.MT
+
+#Remove cells that have unique feature <1000, and with >10% mitochondrial counts.
+#neftel <- subset(neftel, subset = nFeature_RNA > 1000 & percent.MT < 10)
+
+neftel <- NormalizeData(neftel,normalization.method = "RC")
+
+neftel <- FindVariableFeatures(neftel, selection.method = "vst")
+dim(neftel)
+
+
+```
+
+
+```{r}
+top50 <- head(VariableFeatures(neftel),50)
+plot1 <- VariableFeaturePlot(neftel)
+plot2 <- LabelPoints(plot = plot1, points = top50, repel = TRUE)
+plot2
+
+```
+
+
+```{r}
+neftel <- ScaleData(neftel, features = rownames(neftel))
+
+```
+
+extracting the matrix if needed
+```{r}
+#neftel.matrix <- GetAssayData(object = neftel , slot = "scale.data")
+#neftel.matrix <- as.data.frame(neftel.matrix)
+#View(neftel.matrix)
+#write.table(neftel.matrix, "neftelmatrix5006000(scaled).txt")
+#exp.mat2 <- read.table(file = "neftel.matrix.txt", header = TRUE, as.is = TRUE, row.names = 1)
+```
+
+
+```{r}
+neftel <- RunPCA(neftel, features = VariableFeatures(neftel))
+```
+
+
+```{r}
+ElbowPlot(neftel)
+```
+
+```{r}
+neftel <- CellCycleScoring(neftel, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+# view cell cycle scores and phase assignments
+head(neftel[[]])
+
+# extract the cell cycle scoring if needed
+#saveRDS(neftel, "NeftelCellScoring.RDS") 
+#neftel.cellcycle <- readRDS("NeftelCellScoring.RDS")
+#head(neftel.cellcycle)
+```
+
+```{r}
+neftel <- RunPCA(neftel, features = c(s.genes, g2m.genes))
+DimPlot(neftel)
+```
+
+```{r}
+# number of cells in each phase
+table(Idents(neftel))
+```
+
+
+```{r}
+# The top 30 PCs are used as input and a random seed is used for reproducibility.
+dimUsed <- 20
+neftel.tsne <- RunTSNE(neftel, dims=1:dimUsed, seed.use=2021)
+
+DimPlot(neftel.tsne,reduction = "tsne", label = TRUE)
+```
+
+
+```{r}
+dimUsed <- 20
+neftel <- RunUMAP(neftel, dims=1:dimUsed, seed.use=2021)
+DimPlot(neftel,reduction = "umap", label = TRUE)
+```
+
+
+Differential Expression
+```{r}
+G1.clusters <- FindMarkers(neftel, ident.1 = "G1",ident.2 = c("G2M","S") , min.pct = 0.25, return.thresh = 0.05,logfc.threshold = 0.5)
+
+G1.clusters <- subset(G1.clusters,G1.clusters$p_val_adj < 0.05)
+
+#View(G1.clusters)
+
+g1.top <- G1.clusters[order(-G1.clusters$avg_log2FC),]
+g1.top <- head(g1.top, 5)
+
+g1.bottom <- G1.clusters[order(G1.clusters$avg_log2FC),]
+g1.bottom <- head(g1.bottom,5)
+
+g1.10 <- rbind(g1.top,g1.bottom)
+g1.10
+
+```
+
+
+```{r}
+G2M.clusters <- FindMarkers(neftel, ident.1 = "G2M" ,ident.2 = c("G1","S"), min.pct = 0.25, return.thresh = 0.05,logfc.threshold = 0.5)
+
+G2M.clusters <- subset(G2M.clusters,G2M.clusters$p_val_adj < 0.05)
+
+#View(G2M.clusters)
+
+g2m.top <- G2M.clusters[order(-G2M.clusters$avg_log2FC),]
+g2m.top <- head(g2m.top, 5)
+
+g2m.bottom <- G2M.clusters[order(G2M.clusters$avg_log2FC),]
+g2m.bottom <- head(g2m.bottom,5)
+
+g2m.10 <- rbind(g2m.top,g2m.bottom)
+g2m.10
+
+```
+
+```{r}
+S.clusters <- FindMarkers(neftel, ident.1 = "S",ident.2 = c("G1","G2M") , min.pct = 0.25, return.thresh = 0.05,logfc.threshold = 0.5)
+#View(S.clusters)
+
+S.clusters <- subset(S.clusters,S.clusters$p_val_adj < 0.05)
+
+s.top <- S.clusters[order(-S.clusters$avg_log2FC),]
+s.top <- head(s.top, 5)
+
+s.bottom <- S.clusters[order(S.clusters$avg_log2FC),]
+s.bottom <- head(s.bottom,5)
+
+s.10 <- rbind(s.top,s.bottom)
+s.10
+
+```
+
+
+```{r}
+#Differential Expression of each cluster vs the other two clusters
+neftel.markers <- FindAllMarkers(neftel, only.pos = FALSE, min.pct = 0.25, logfc.threshold = 0.5, return.thresh = 0.05)
+neftel.markers <- subset(neftel.markers, neftel.markers$p_val_adj < 0.05)
+
+#View(neftel.markers)
+
+#write_xlsx(neftel.markers,"F:\\documents\\Rstudio\\Module 6\\neftelDEanalysis.xlsx")
+
+
+markers.top <- neftel.markers[order(-neftel.markers$avg_log2FC),]
+#markers.top
+
+markers.bottom <- neftel.markers[order(neftel.markers$avg_log2FC),]
+#markers.bottom
+```
+
+
+
+```{r}
+topMarkers <- split(markers.top, markers.top$cluster)
+top5 <- lapply(topMarkers, head, n=5)
+top5 <- do.call("rbind", top5)
+top5
+
+```
+
+
+```{r}
+bottomMarkers <- split(markers.bottom, markers.bottom$cluster)
+bottom5 <- lapply(bottomMarkers, head, n=5)
+bottom5 <- do.call("rbind", bottom5)
+bottom5
+```
+
+```{r}
+# Venn diagram showing overlap of genes differentially expressed in each cluster
+G1 <- nrow(G1.clusters)
+G2M <- nrow(G2M.clusters)
+S <- nrow(S.clusters)
+
+G1nG2M <- length(intersect(rownames(G1.clusters),rownames(G2M.clusters)))
+G1nS <- length(intersect(rownames(G1.clusters),rownames(S.clusters)))
+G2MnS <- length(intersect(rownames(G2M.clusters),rownames(S.clusters)))
+G1nG2MnS <- length(intersect(intersect(rownames(G1.clusters),rownames(G2M.clusters)),rownames(S.clusters)))
+
+
+venn.plot <- draw.triple.venn(G1,G2M,S,G1nG2M,G2MnS,G1nS,G1nG2MnS,
+                              category = c("G1 phase","G2M phase", "S phase"),
+                              fill = c("red", "blue", "green"),
+                              alpha = rep(0.5, 3),
+                              cex = 1.5,
+                              cat.cex = 1.5)
+
+
+grid.newpage()
+grid.draw(venn.plot)
+```
+
+```{r}
+#number of differentially expressed genes in each cluster
+table(neftel.markers$cluster)
+
+```
+
+```{r}
+#Overlap in the top 10 up and down regulated genes
+
+rownames(g1.10)
+rownames(g2m.10)
+rownames(s.10)
+
+intersect(rownames(g1.10),rownames(G2M.clusters))
+intersect(rownames(g1.10),rownames(S.clusters))
+intersect(intersect(rownames(g1.10),rownames(S.clusters)),rownames(G2M.clusters))
+
+intersect(rownames(g2m.10),rownames(G1.clusters))
+intersect(rownames(g2m.10),rownames(S.clusters))
+intersect(intersect(rownames(g2m.10),rownames(S.clusters)),rownames(G1.clusters))
+
+intersect(rownames(s.10),rownames(G1.clusters))
+intersect(rownames(s.10),rownames(G2M.clusters))
+intersect(intersect(rownames(s.10),rownames(G2M.clusters)),rownames(G1.clusters))
+
+
+# Overlap between DE genes and tirosh marker genes # 77/96
+length(intersect(rownames(neftel.markers),s.genes)) # 35/43
+length(intersect(rownames(neftel.markers),g2m.genes)) # 42/53
+
+```
+
+
+```{r}
+# Visualize the distribution of cell cycle markers across (G1 phase)
+RidgePlot(neftel, features = top5$gene[1:5], ncol = 3)
+RidgePlot(neftel, features = bottom5$gene[1:5], ncol = 3)
+```
+
+
+```{r}
+# Visualize the distribution of cell cycle markers across (S phase)
+RidgePlot(neftel, features = top5$gene[6:10], ncol = 3)
+RidgePlot(neftel, features = bottom5$gene[6:10], ncol = 3)
+```
+
+
+```{r}
+# Visualize the distribution of cell cycle markers across (G2/M phase)
+RidgePlot(neftel, features = top5$gene[11:15], ncol = 3)
+RidgePlot(neftel, features = bottom5$gene[11:15], ncol = 3)
+```
+
+
+```{r}
+# RIDGEPLOT FOR TACC3
+
+RidgePlot(neftel, features = "TACC3", ncol = 1)
+```
+
+
+```{r}
+#G1 PHASE
+FeaturePlot(neftel, features = top5$gene[1:5], ncol=3)
+FeaturePlot(neftel, features = bottom5$gene[1:5], ncol=3)
+```
+
+```{r}
+#S PHASE
+FeaturePlot(neftel, features = top5$gene[6:10], ncol=3)
+FeaturePlot(neftel, features = bottom5$gene[6:10], ncol=3)
+```
+
+```{r}
+#G2M PHASE
+FeaturePlot(neftel, features = top5$gene[11:15], ncol=3)
+FeaturePlot(neftel, features = bottom5$gene[11:15], ncol=3)
+```
+
+```{r}
+# FeaturePlot for TACC3
+FeaturePlot(neftel, features = "TACC3", ncol=1)
+```
+
+
+
+```{r}
+#G1 PHASE
+VlnPlot(neftel, features = top5$gene[1:5], ncol =3)
+VlnPlot(neftel, features = bottom5$gene[1:5], ncol =3)
+```
+
+```{r}
+#S PHASE
+VlnPlot(neftel, features = top5$gene[6:10], ncol =3)
+VlnPlot(neftel, features = bottom5$gene[6:10], ncol =3)
+```
+
+```{r}
+#G2M PHASE
+VlnPlot(neftel, features = top5$gene[11:15], ncol =3)
+VlnPlot(neftel, features = bottom5$gene[11:15], ncol =3)
+```
+
+```{r}
+# Violin Plot for TACC3
+VlnPlot(neftel, features = "TACC3", ncol =1)
+```
+
+
+```{r}
+DotPlot(neftel, features = unique(top5$gene) ,dot.scale = 8) + RotatedAxis()
+DotPlot(neftel, features = unique(bottom5$gene) ,dot.scale = 8) + RotatedAxis()
+```
+
+Gene set enrichment analysis 
+
+```{r}
+Msig <- gmtPathways("../c5.go.v2022.1.Hs.symbols.gmt")
+Msig <- gmtPathways("../c2.cp.kegg.v2022.1.Hs.symbols.gmt")
+
+length(Msig)
+
+Msig <- subset(Msig, names(Msig) %like% "CELL_CYCLE|MITOTIC|MEIOTIC|MITOSIS|MEIOSIS|GLIOBLASTOMA")
+
+
+length(Msig)
+
+#View(Msig)
+```
+
+
+G1 phase
+```{r}
+G1.clusters.ord <- G1.clusters[order(G1.clusters$avg_log2FC),]
+
+g1gene.rnk <- G1.clusters.ord$avg_log2FC
+
+names(g1gene.rnk) <- rownames(G1.clusters.ord)
+
+head(g1gene.rnk)
+
+
+
+g1.fgseaRes <- fgseaMultilevel(Msig, g1gene.rnk, eps=0.0,minSize=15,maxSize=500)
+
+head(g1.fgseaRes)
+
+dim(g1.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5)))
+
+g1.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+g1.fgseaRes.sig <- g1.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+g1path.list <- g1.fgseaRes.sig$pathway
+g1path.list
+
+
+```
+
+```{r}
+#Create pathway specific enrichment plot
+# pdf("G1fGsea.EnrichmentPlt(GO).pdf",width=3,height=3)
+# for(i in 1:2)
+# {
+# print(plotEnrichment(Msig[[paste0(g1path.list[i])]],g1gene.rnk)+ 
+# labs(title=paste0(g1path.list[i])) + theme(plot.title = element_text(size=5),axis.text.x = 
+# element_text(size=3),axis.text.y = element_text(size=3),axis.title.x = 
+# element_text(size=4),axis.title.y = element_text(size=4)))
+# }
+# dev.off()
+# 
+#  #A summary plot of all significant pathways
+# result.fgsea.colapsd <- collapsePathways(g1.fgseaRes.sig[order(pval)][padj                      <0.01],Msig,g1gene.rnk)
+# result.fgsea.colapsd.MP <- g1.fgseaRes.sig[pathway %in% result.fgsea.colapsd$mainPathways][order(-NES), pathway]
+# 
+# pdf("G1fGseaTablePlt(GO).pdf",width=11,height=9)
+# plotGseaTable(Msig[result.fgsea.colapsd.MP],g1gene.rnk,g1.fgseaRes,gseaParam = 0.5)
+# dev.off()
+# 
+# fwrite(g1.fgseaRes,file="g1fGseaReslt(GO).txt",sep="\t",sep2=c(""," ",""))
+```
+
+
+G2 phase
+```{r}
+G2M.clusters.ord <- G2M.clusters[order(G2M.clusters$avg_log2FC),]
+
+g2mgene.rnk <- G2M.clusters.ord$avg_log2FC
+
+names(g2mgene.rnk) <- rownames(G2M.clusters.ord)
+
+head(g2mgene.rnk)
+
+
+g2m.fgseaRes <- fgseaMultilevel(Msig, g2mgene.rnk,eps=0.0,minSize=15,maxSize=500)
+
+head(g2m.fgseaRes)
+
+dim(g2m.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5)))
+
+g2m.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+g2m.fgseaRes.sig <- g2m.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+g2mpath.list <- g2m.fgseaRes.sig$pathway
+length(g2mpath.list)
+head(g2mpath.list)
+
+#write_xlsx(g2m.fgseaRes.sig,"g2mfgseaRessig.xlsx")
+view(g2m.fgseaRes.sig)
+```
+
+
+```{r}
+#Create pathway specific enrichment plot
+# pdf("G2MfGsea.EnrichmentPlt(GO).pdf",width=3,height=3)
+# for(i in 1:2)
+# {
+# print(plotEnrichment(Msig[[paste0(g2mpath.list[i])]],g2mgene.rnk)+ 
+# labs(title=paste0(g2mpath.list[i])) + theme(plot.title = element_text(size=5),axis.text.x = 
+# element_text(size=3),axis.text.y = element_text(size=3),axis.title.x = 
+# element_text(size=4),axis.title.y = element_text(size=4)))
+# }
+# dev.off()
+# 
+# # A summary plot of all significant pathways
+# result.fgsea.colapsd <- collapsePathways(g2m.fgseaRes.sig[order(pval)][padj                      <0.01],Msig,g2mgene.rnk)
+# result.fgsea.colapsd.MP <- g2m.fgseaRes.sig[pathway %in% result.fgsea.colapsd$mainPathways][order(-NES), pathway]
+# 
+# pdf("G2MfGseaTablePlt(GO).pdf",width=11,height=9)
+# plotGseaTable(Msig[result.fgsea.colapsd.MP],g2mgene.rnk,g2m.fgseaRes,gseaParam = 0.5)
+# dev.off()
+# 
+# fwrite(g2m.fgseaRes,file="g2mfGseaReslt(GO).txt",sep="\t",sep2=c(""," ",""))
+```
+
+
+S phase
+```{r}
+S.clusters.ord <- S.clusters[order(S.clusters$avg_log2FC),]
+
+sgene.rnk <- S.clusters.ord$avg_log2FC
+
+names(sgene.rnk) <- rownames(S.clusters.ord)
+
+head(sgene.rnk)
+
+
+s.fgseaRes <- fgseaMultilevel(Msig, sgene.rnk,eps=0.0,minSize=15,maxSize=500)
+
+head(s.fgseaRes)
+
+dim(s.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5)))
+
+s.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+s.fgseaRes.sig <- s.fgseaRes %>% filter(padj < 0.05 & (NES >= 1.5 | NES <= -1.5))
+
+spath.list <- s.fgseaRes.sig$pathway
+length(spath.list)
+head(spath.list)
+
+write_xlsx(s.fgseaRes.sig,"s.fgseaRes.sig.xlsx")
+```
+
+```{r}
+#Create pathway specific enrichment plot
+# pdf("SfGsea.EnrichmentPlt(GO).pdf",width=3,height=3)
+# for(i in 1:2)
+# {
+# print(plotEnrichment(Msig[[paste0(spath.list[i])]],sgene.rnk)+ 
+# labs(title=paste0(spath.list[i])) + theme(plot.title = element_text(size=5),axis.text.x = 
+# element_text(size=3),axis.text.y = element_text(size=3),axis.title.x = 
+# element_text(size=4),axis.title.y = element_text(size=4)))
+# }
+# dev.off()
+# 
+# # A summary plot of all significant pathways
+# result.fgsea.colapsd <- collapsePathways(s.fgseaRes.sig[order(pval)][padj <0.01],Msig,sgene.rnk)
+# result.fgsea.colapsd.MP <- s.fgseaRes.sig[pathway %in% result.fgsea.colapsd$mainPathways][order(-NES), pathway]
+# 
+# pdf("SfGseaTablePlt(GO).pdf",width=11,height=9)
+# plotGseaTable(Msig[result.fgsea.colapsd.MP],sgene.rnk,s.fgseaRes,gseaParam = 0.5)
+# dev.off()
+# 
+# fwrite(s.fgseaRes,file="SfGseaReslt(GO).txt",sep="\t",sep2=c(""," ",""))
+```
+
+
+```{r}
+#save.image(file = "Neftel 500 6000.RData")
+```
+
