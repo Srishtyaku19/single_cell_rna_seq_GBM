@@ -1,0 +1,94 @@
+---
+title: "LeBlanc_BC"
+author: "Srishty Aku"
+date: "2023-02-22"
+output: html_document
+---
+
+```{r}
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("BiocParallel")
+
+install.packages('Seurat')
+
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("fgsea")
+
+
+
+```
+
+
+```{r}
+library(BiocParallel)
+library(Seurat)
+library(VennDiagram)
+library(fgsea)
+library(data.table)
+library(tidyverse)
+
+```
+
+```{r}
+# A list of cell cycle markers, from Tirosh et al, 2015, is loaded with Seurat.  We can
+# segregate this list into markers of G2/M phase and markers of S phase
+s.genes <- cc.genes$s.genes
+g2m.genes <- cc.genes$g2m.genes
+g2m.genes <- g2m.genes[!grepl("TACC3",g2m.genes)]
+
+```
+
+```{r}
+# Create our Seurat object and complete the initalization steps
+
+#Genes expressed in less than 500 cells are removed. Cells with at least 6000 detected genes are kept.
+LeBlanc <- CreateSeuratObject(counts = LeBlancExpMat, min.cells = 200, min.features = 2000)
+
+PercentageFeatureSet(LeBlanc,pattern="^MT-") -> LeBlanc$percent.MT
+
+#Remove cells that have unique feature <1000, and with >10% mitochondrial counts.
+LeBlanc <- subset(LeBlanc, subset = nFeature_RNA > 1000 & percent.MT < 10)
+
+#LeBlanc <- NormalizeData(LeBlanc)
+
+LeBlanc <- FindVariableFeatures(LeBlanc, selection.method = "vst")
+dim(LeBlanc)
+```
+
+
+```{r}
+LeBlanc <- ScaleData(LeBlanc, features = rownames(LeBlanc))
+```
+
+```{r}
+LeBlanc <- RunPCA(LeBlanc, features = VariableFeatures(LeBlanc))
+```
+
+```{r}
+LeBlanc <- CellCycleScoring(LeBlanc, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+
+# view cell cycle scores and phase assignments
+head(LeBlanc[[]])
+
+
+# extract the cell cycle scoring if needed
+#saveRDS(LeBlanc, "LeBlancCellScoring.RDS") 
+#LeBlanc.cellcycle <- readRDS("LeBlancCellScoring.RDS")
+#head(darmanis.cellcycle)
+```
+
+```{r}
+LeBlanc <- RunPCA(LeBlanc, features = c(s.genes, g2m.genes))
+DimPlot(LeBlanc)
+```
+
+```{r}
+table(Idents(LeBlanc))
+```
+
+
+
